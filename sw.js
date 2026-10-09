@@ -1,11 +1,11 @@
 // Offline cache for the app shell. Bump CACHE (and js/version.js) on every release.
-const CACHE = 'lexis-v1.0.0';
+const CACHE = 'lexis-v1.1.0';
 const ASSETS = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
   'js/app.js', 'js/store.js', 'js/srs.js', 'js/util.js', 'js/dict.js', 'js/tts.js', 'js/prompts.js', 'js/version.js',
   'js/vendor/ts-fsrs.mjs',
-  'js/data/constants.js', 'js/data/phrases.js',
+  'js/data/constants.js', 'js/data/phrases.js', 'js/data/topics.js', 'js/data/errors.js',
   'js/views/today.js', 'js/views/study.js', 'js/views/add.js', 'js/views/list.js', 'js/views/note.js',
   'js/views/enrich.js', 'js/views/write.js', 'js/views/profile.js',
 ];

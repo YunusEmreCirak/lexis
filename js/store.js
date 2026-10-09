@@ -62,8 +62,8 @@ export const DEFAULT_SETTINGS = {
   autoplay: true,
   listenShare: 0.3,
   dayStart: 4,
-  pools: { awl: true, oxford: true, phrases: true },
-  poolWeights: { awl: 2, oxford: 2, phrases: 1 },
+  pools: { topics: true, errors: true, phrases: true, awl: true, oxford: true },
+  poolWeights: { topics: 2, errors: 1, phrases: 1, awl: 1, oxford: 1 },
   enrichBatch: 20,
 };
 

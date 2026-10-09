@@ -1,6 +1,6 @@
 // Stats, settings, backup/restore, pool pack.
 import { S, idb, saveSettings, saveMeta, exportAll, importAll, requestPersistence } from '../store.js';
-import { streak, State, initScheduler, importPoolEntries } from '../srs.js';
+import { streak, State, initScheduler, importPoolEntries, POOL_SOURCES } from '../srs.js';
 import { h, mount, toast, dayKey, DAY, download, fmtDate } from '../util.js';
 import { APP_VERSION } from '../version.js';
 
@@ -51,7 +51,7 @@ export async function render(root) {
   let usage = '';
   try { const e = await navigator.storage.estimate(); usage = `${(e.usage / 1048576).toFixed(1)} MB kullanılıyor`; } catch {}
 
-  const pc = { awl: 0, oxford: 0, phrases: 0 };
+  const pc = {};
   for (const p of S.pool.values()) pc[p.src] = (pc[p.src] || 0) + 1;
 
   mount(root, 
@@ -82,9 +82,8 @@ export async function render(root) {
 
     h('h2', null, 'Kelime havuzu'),
     h('div', { class: 'card' },
-      h('div', { class: 'small muted' }, `Bekleyen: AWL ${pc.awl} · Oxford B2–C1 ${pc.oxford} · IELTS kalıpları ${pc.phrases}`),
-      ...['awl', 'oxford', 'phrases'].map(k => h('div', { class: 'switch' },
-        h('span', null, { awl: 'Academic Word List', oxford: 'Oxford 5000 (B2–C1)', phrases: 'IELTS akademik kalıplar' }[k]),
+      ...POOL_SOURCES.map(k => h('div', { class: 'switch' },
+        h('span', null, POOL_LABELS[k], h('div', { class: 'small muted' }, pc[k] ? `${pc[k]} kart bekliyor` : k === 'awl' || k === 'oxford' ? 'paket yüklenmedi / bitti' : 'tamamlandı')),
         h('div', { class: 'row' },
           h('select', { style: { minWidth: '70px' }, onchange: async e => { S.settings.poolWeights[k] = +e.target.value; await saveSettings(); } },
             [1, 2, 3].map(w => h('option', { value: w, selected: S.settings.poolWeights[k] === w }, `×${w}`))),
@@ -116,6 +115,14 @@ export async function render(root) {
     h('p', { class: 'small muted center', style: { marginTop: '24px' } }, `Lexis v${APP_VERSION} · FSRS (ts-fsrs) · Sözlük: dictionaryapi.dev, Datamuse`),
   );
 }
+
+const POOL_LABELS = {
+  topics: 'IELTS konu kelimeleri (16 konu)',
+  errors: 'Türk öğrencilerin tipik hataları',
+  phrases: 'IELTS akademik kalıplar',
+  awl: 'Academic Word List',
+  oxford: 'Oxford 5000 (B2–C1)',
+};
 
 function startOfDay(ts, ds) {
   const d = new Date(ts - ds * 3600000); d.setHours(0, 0, 0, 0);

@@ -34,7 +34,7 @@ function detail(root, n) {
       h('div', { class: 'row wrap', style: { marginTop: '10px' } },
         h('span', { class: `badge ${isErr ? 'err' : cls}` }, isErr ? 'Hata defteri' : label),
         n.topic ? h('span', { class: 'badge' }, n.topic) : null,
-        h('span', { class: 'badge' }, { mine: 'Benim', writing: 'Yazmadan', awl: 'AWL', oxford: 'Oxford', phrases: 'IELTS kalıbı' }[n.origin] || n.origin),
+        h('span', { class: 'badge' }, { mine: 'Benim', writing: 'Yazmadan', awl: 'AWL', oxford: 'Oxford', phrases: 'IELTS kalıbı', topics: 'IELTS konu', errors: 'Tipik hata' }[n.origin] || n.origin),
         n.enriched ? null : h('span', { class: 'badge learn' }, 'zenginleştirilmedi')),
       isErr ? [sec('Doğrusu', h('div', { class: 'serif', style: { fontSize: '18px' } }, n.correct || '—')), sec('Kural', n.explanation ? h('div', null, n.explanation) : null)]
         : [

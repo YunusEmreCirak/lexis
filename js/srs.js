@@ -7,7 +7,7 @@
 // so a brand-new word is first met receptively, then produced.
 
 import { fsrs, generatorParameters, createEmptyCard, State, Rating } from './vendor/ts-fsrs.mjs';
-import { S, saveItem, saveItems, saveNote, saveMeta, addLog, deleteLog, savePool, idb } from './store.js';
+import { S, saveItem, saveItems, saveNote, saveMeta, addLog, deleteLog, savePool, deletePool, idb } from './store.js';
 import { uid, dayKey, nextDayStart, shuffle } from './util.js';
 
 export { State, Rating };
@@ -222,10 +222,10 @@ export async function markKnown(sess, item) {
 }
 
 // ---------- pool ----------
-const POOL_SOURCES = ['awl', 'oxford', 'phrases'];
+export const POOL_SOURCES = ['topics', 'errors', 'phrases', 'awl', 'oxford'];
 
 function poolQueues() {
-  const by = { awl: [], oxford: [], phrases: [] };
+  const by = Object.fromEntries(POOL_SOURCES.map(s => [s, []]));
   for (const p of S.pool.values()) if (by[p.src]) by[p.src].push(p);
   for (const k in by) by[k].sort((a, b) => a.order - b.order);
   return by;
@@ -240,7 +240,7 @@ export function upcomingPool(k) {
     for (let i = 0; i < (S.settings.poolWeights[s] || 0); i++) cycle.push(s);
   }
   if (!cycle.length) return [];
-  const idx = { awl: 0, oxford: 0, phrases: 0 };
+  const idx = Object.fromEntries(POOL_SOURCES.map(s => [s, 0]));
   const out = [];
   let turn = S.meta.poolTurn || 0, guard = 0;
   while (out.length < k && guard < k * cycle.length + cycle.length) {
@@ -261,10 +261,16 @@ export async function topUpFromPool() {
     S.meta.poolTurn = (S.meta.poolTurn || 0) + 1;
     await idb.del('pool', p.id); S.pool.delete(p.id);
     if ([...S.notes.values()].some(n => (n.term || '').toLowerCase() === p.term.toLowerCase())) continue;
+    const source = {
+      awl: `AWL sublist ${p.sub}`,
+      oxford: `Oxford 5000 · ${p.cefr}`,
+      phrases: 'IELTS kalıpları',
+      topics: `IELTS konu kelimeleri · ${p.data?.topic || ''}`,
+      errors: 'Türk öğrencilerin tipik hataları',
+    }[p.src] || '';
     await addNote({
       type: p.data?.type || (/\s/.test(p.term) ? 'phrase' : 'word'),
-      term: p.term, pos: p.pos || '', cefr: p.cefr || '',
-      source: p.src === 'awl' ? `AWL sublist ${p.sub}` : p.src === 'oxford' ? `Oxford 5000 · ${p.cefr}` : 'IELTS kalıpları',
+      term: p.term, pos: p.pos || '', cefr: p.cefr || '', source,
       ...(p.data || {}), enriched: !!p.data,
     }, p.src);
     added++;
@@ -273,16 +279,29 @@ export async function topUpFromPool() {
   return added;
 }
 
+// The same word can appear in several sources (e.g. AWL and the topic list). Only one pool entry per
+// term is kept, preferring the one that already carries enrichment data.
 export async function importPoolEntries(entries) {
   const existing = new Set([...S.notes.values()].map(n => (n.term || '').toLowerCase()));
-  const list = [];
+  const byTerm = new Map([...S.pool.values()].map(p => [p.term.toLowerCase(), p]));
+  const list = [], drop = [];
   for (const e of entries) {
     if (!e?.term || !POOL_SOURCES.includes(e.src)) continue;
-    const id = `p_${e.src}_${e.term.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-    if (existing.has(e.term.toLowerCase())) continue;
+    const key = e.term.toLowerCase();
+    const id = `p_${e.src}_${key.replace(/[^a-z0-9]+/g, '-')}`;
+    if (existing.has(key)) continue;
     const prev = S.pool.get(id);
-    list.push({ id, term: e.term, pos: e.pos || '', cefr: e.cefr || '', sub: e.sub || 0, src: e.src, order: e.order ?? 0, data: e.data || prev?.data || null });
+    const data = e.data || prev?.data || null;
+    const other = byTerm.get(key);
+    if (other && other.id !== id) {
+      if (other.data || !data) continue;
+      drop.push(other.id);
+    }
+    const entry = { id, term: e.term, pos: e.pos || '', cefr: e.cefr || '', sub: e.sub || 0, src: e.src, order: e.order ?? 0, data };
+    byTerm.set(key, entry);
+    list.push(entry);
   }
+  if (drop.length) await deletePool(drop);
   await savePool(list);
   return list.length;
 }

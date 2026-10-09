@@ -1,8 +1,10 @@
-import { loadAll, S, saveMeta, requestPersistence } from './store.js';
+import { loadAll, S, saveMeta, saveSettings, requestPersistence } from './store.js';
 import { initScheduler, importPoolEntries } from './srs.js';
 import { backfillDictionary } from './dict.js';
 import { unlockAudio } from './tts.js';
 import { PHRASES, PHRASES_VERSION } from './data/phrases.js';
+import { TOPIC_WORDS, TOPICS_VERSION } from './data/topics.js';
+import { ERROR_CARDS, ERRORS_VERSION } from './data/errors.js';
 import { h } from './util.js';
 import * as today from './views/today.js';
 import * as study from './views/study.js';
@@ -33,11 +35,31 @@ async function route() {
   if (name !== 'study') window.scrollTo(0, 0);
 }
 
-async function seedPhrases() {
-  if (S.meta.phrasesVersion === PHRASES_VERSION) return;
-  await importPoolEntries(PHRASES);
-  S.meta.phrasesVersion = PHRASES_VERSION;
-  await saveMeta();
+// Built-in pools ship with the app; each is (re)imported once per version.
+const BUILTIN_POOLS = [
+  ['topics', TOPICS_VERSION, TOPIC_WORDS],
+  ['errors', ERRORS_VERSION, ERROR_CARDS],
+  ['phrases', PHRASES_VERSION, PHRASES],
+];
+
+async function seedPools() {
+  const seeded = S.meta.seeded || (S.meta.seeded = {});
+  if (S.meta.phrasesVersion && !seeded.phrases) seeded.phrases = S.meta.phrasesVersion; // v1.0 bookkeeping
+  let changed = false;
+  for (const [key, version, entries] of BUILTIN_POOLS) {
+    if (seeded[key] === version) continue;
+    await importPoolEntries(entries);
+    seeded[key] = version;
+    changed = true;
+  }
+  // v1.1: ready-made pools get priority over the raw AWL/Oxford lists, unless the user changed the weights
+  if (!S.meta.weightsV2) {
+    const w = S.settings.poolWeights;
+    if (w.awl === 2 && w.oxford === 2 && w.phrases === 1) { w.awl = 1; w.oxford = 1; await saveSettings(); }
+    S.meta.weightsV2 = true;
+    changed = true;
+  }
+  if (changed) await saveMeta();
 }
 
 function registerSW() {
@@ -54,6 +76,8 @@ function registerSW() {
       const w = reg.installing;
       w?.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) prompt(); });
     });
+    // Browsers don't reliably re-check sw.js when a home-screen app is launched, so check on every start.
+    reg.update().catch(() => {});
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
   }).catch(() => {});
   let reloading = false;
@@ -63,7 +87,7 @@ function registerSW() {
 (async function main() {
   await loadAll();
   initScheduler();
-  await seedPhrases();
+  await seedPools();
   if (!S.meta.installedAt) { S.meta.installedAt = Date.now(); await saveMeta(); }
   document.addEventListener('pointerdown', unlockAudio, { once: true });
   window.addEventListener('hashchange', route);
