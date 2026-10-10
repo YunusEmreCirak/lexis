@@ -6,6 +6,9 @@ import { S, saveNote, savePool } from './store.js';
 import { TOPICS, ERROR_CATS } from './data/constants.js';
 import { upcomingPool } from './srs.js';
 
+const PROMPT_MARKER = 'Return ONLY one JSON code block';
+const TEMPLATE_WRONG = 'exact erroneous fragment copied from the text';
+
 const profile = () => `Learner: ${S.settings.name || 'the learner'}, Turkish native speaker, Industrial Engineering senior, level B2 → target C1 (${S.settings.target}). Weak areas: vocabulary range and grammar accuracy. Strong: listening and speaking fluency.`;
 
 // ---------- enrichment ----------
@@ -30,7 +33,7 @@ export function buildEnrichPrompt(entries) {
   });
   return `You are building personalised IELTS flashcards. ${profile()}
 
-Return ONLY one JSON code block, no other text, exactly in this shape:
+${PROMPT_MARKER}, no other text, exactly in this shape:
 {"lexis":"enrich","v":1,"items":[ ... one object per input item, same "id" ... ]}
 
 For type "word" or "phrase", each object has:
@@ -62,6 +65,8 @@ ${JSON.stringify(items, null, 1)}`;
 // Pull the first JSON object out of Claude's reply (handles ```json fences and surrounding text).
 export function extractJSON(text) {
   if (!text) throw new Error('Boş metin.');
+  // Both prompts contain a JSON template; pasting the prompt back must not be mistaken for Claude's answer.
+  if (text.includes(PROMPT_MARKER)) throw new Error('Panoda hâlâ uygulamanın komutu var. Önce Claude’un cevabındaki JSON bloğunu kopyala.');
   const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
   let s = (fence ? fence[1] : text).trim();
   const a = s.indexOf('{'), b = s.lastIndexOf('}');
@@ -142,17 +147,18 @@ export function buildWritingPrompt({ question, words, text }) {
 
 He wrote the text below to practise these target words: ${JSON.stringify(words)}
 ${question ? `Task: ${question}\n` : ''}
+This is a single-paragraph vocabulary exercise (about 80–150 words), not a full 250-word essay. Do NOT lower the scores for length or for a missing introduction/conclusion; judge Task Response by how clearly and convincingly the paragraph argues its point, and judge the other criteria as usual.
 Text:
 """
 ${text}
 """
 
-Return ONLY one JSON code block, no other text, exactly in this shape:
+${PROMPT_MARKER}, no other text, exactly in this shape:
 {"lexis":"feedback","v":1,
  "band":{"overall":"6.0","TR":"6.0","CC":"6.0","LR":"6.0","GRA":"6.0"},
  "summary":"2–3 sentences in Turkish: overall verdict and the single most important thing to fix",
  "words":[{"term":"<each target word>","used":true,"correct":true,"comment":"short Turkish comment on how it was used, or a model sentence if not used/wrong"}],
- "errors":[{"wrong":"exact erroneous fragment copied from the text","correct":"corrected fragment","explanation":"rule in Turkish, max 2 sentences","category":"one of ${Object.keys(ERROR_CATS).join(' | ')}"}],
+ "errors":[{"wrong":"${TEMPLATE_WRONG}","correct":"corrected fragment","explanation":"rule in Turkish, max 2 sentences","category":"one of ${Object.keys(ERROR_CATS).join(' | ')}"}],
  "improved":"a Band 7.5 rewrite that keeps his ideas and uses the target words naturally"}
 
 Band scores are indicative for a short text (use .0/.5 steps). List every grammar/vocabulary error, max 12, most important first.`;
@@ -164,7 +170,7 @@ export function parseFeedback(json) {
     band: json.band || {},
     summary: str(json.summary),
     words: Array.isArray(json.words) ? json.words : [],
-    errors: (Array.isArray(json.errors) ? json.errors : []).filter(e => str(e.wrong) && str(e.correct)),
+    errors: (Array.isArray(json.errors) ? json.errors : []).filter(e => str(e.wrong) && str(e.correct) && str(e.wrong) !== TEMPLATE_WRONG),
     improved: str(json.improved),
   };
 }

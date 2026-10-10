@@ -3,9 +3,10 @@ import { S, saveMeta, saveWriting, allWritings } from '../store.js';
 import { addNote, State } from '../srs.js';
 import { buildWritingPrompt, extractJSON, parseFeedback } from '../prompts.js';
 import { TASK2, ERROR_CATS } from '../data/constants.js';
-import { h, mount, toast, copyText, readClipboard, uid, shuffle, pick, findTerm, fmtDate } from '../util.js';
+import { h, mount, toast, copyText, readClipboard, uid, shuffle, pick, findTerm, fmtDate, norm } from '../util.js';
 
-let draft = null; // { id, question, words, text, feedback }
+let draft = null;   // { id, question, words, text, feedback, createdAt }
+let viewing = null; // a saved writing opened from the history
 
 function chooseWords(n = 10) {
   // words already in review (learned at least once), favouring ones not yet used in writing
@@ -29,7 +30,10 @@ function chooseQuestion(words) {
   return (matching.length ? pick(matching) : pick(TASK2)).q;
 }
 
+export function leave() { viewing = null; }
+
 export async function render(root) {
+  if (viewing) return renderSaved(root, viewing);
   if (!draft) {
     const words = chooseWords();
     draft = { id: uid('w'), question: chooseQuestion(words), words, text: S.meta.writingDraft || '', feedback: null, createdAt: Date.now() };
@@ -51,9 +55,9 @@ export async function render(root) {
 
   const history = await allWritings();
 
-  mount(root, 
+  mount(root,
     h('h1', null, 'Yazma görevi'),
-    h('p', { class: 'muted small' }, 'Kelimeyi kendi cümlende üretmek kalıcılığı artırır. Claude IELTS kriterlerine göre değerlendirir; hataların otomatik olarak hata defterine eklenebilir.'),
+    h('p', { class: 'muted small' }, 'Kelimeyi kendi cümlende üretmek kalıcılığı artırır. Claude IELTS kriterlerine göre değerlendirir; hataların hata defterine eklenebilir.'),
     !d.words.length ? h('div', { class: 'card warn' }, 'Henüz tekrar aşamasına geçmiş kelimen yok. Birkaç gün çalıştıktan sonra burada hedef kelimeler belirecek. Yine de serbest yazıp kontrol ettirebilirsin.') : null,
     h('div', { class: 'card' },
       h('div', { class: 'row between' }, h('b', null, 'Soru (Task 2 tarzı)'), h('button', { class: 'btn ghost sm', onclick: () => { d.question = pick(TASK2).q; render(root); } }, 'Değiştir')),
@@ -81,15 +85,28 @@ export async function render(root) {
         h('button', { class: 'btn block sm', style: { marginTop: '6px' }, onclick: () => applyFeedback(root, d, box.value) }, 'Uygula'));
     })(),
     d.feedback ? feedbackView(root, d) : null,
-    history.length ? h('div', null, h('h2', null, 'Geçmiş'), h('div', { class: 'list' }, history.slice(0, 20).map(w =>
-      h('div', { class: 'li' }, h('div', { class: 'grow' }, h('div', { class: 't' }, w.question.slice(0, 60) + '…'), h('div', { class: 's' }, `${fmtDate(w.createdAt)} · ${w.words.length} hedef kelime`)),
+    d.feedback ? h('button', { class: 'btn block', style: { marginTop: '10px' }, onclick: () => { draft = null; render(root); } }, 'Yeni görev') : null,
+    history.length ? h('div', null, h('h2', null, 'Geçmiş'), h('div', { class: 'list' }, history.slice(0, 30).map(w =>
+      h('a', { class: 'li', href: '#/write', onclick: e => { e.preventDefault(); viewing = w; render(root); } },
+        h('div', { class: 'grow' }, h('div', { class: 't' }, w.question.slice(0, 60) + '…'), h('div', { class: 's' }, `${fmtDate(w.createdAt)} · ${pendingErrors(w.feedback).length ? `${pendingErrors(w.feedback).length} hata deftere eklenmedi` : 'geri bildirim'}`)),
         w.feedback?.band?.overall ? h('span', { class: 'badge mature' }, `Band ${w.feedback.band.overall}`) : null)))) : null,
+  );
+}
+
+// A past writing with its feedback; errors can be (re)added to the error log from here.
+function renderSaved(root, w) {
+  mount(root,
+    h('button', { class: 'btn ghost', style: { paddingLeft: 0 }, onclick: () => { viewing = null; render(root); } }, '‹ Yazma görevi'),
+    h('h1', null, fmtDate(w.createdAt)),
+    h('div', { class: 'card' }, h('b', null, 'Soru'), h('p', { class: 'serif', style: { margin: '6px 0 0' } }, w.question)),
+    h('div', { class: 'card soft' }, h('b', null, 'Senin metnin'), h('p', { class: 'serif', style: { marginBottom: 0, whiteSpace: 'pre-wrap' } }, w.text)),
+    w.feedback ? feedbackView(root, w) : h('div', { class: 'empty' }, 'Bu yazı için geri bildirim yok.'),
   );
 }
 
 async function applyFeedback(root, d, text) {
   try { d.feedback = parseFeedback(extractJSON(text)); await finish(d); render(root); }
-  catch (e) { toast(e.message, 4000); }
+  catch (e) { toast(e.message, 5000); }
 }
 
 async function finish(d) {
@@ -102,10 +119,19 @@ async function finish(d) {
   await saveWriting({ id: d.id, question: d.question, words: d.words, text: d.text, feedback: d.feedback, createdAt: d.createdAt });
 }
 
+// An error counts as already in the error log when a card with the same wrong text exists.
+function inErrorLog(e) {
+  const w = norm(e.wrong);
+  for (const n of S.notes.values()) if (n.type === 'error' && norm(n.wrong) === w) return true;
+  return false;
+}
+const pendingErrors = f => (f?.errors || []).filter(e => !inErrorLog(e));
+
 function feedbackView(root, d) {
   const f = d.feedback;
-  const sel = new Set(f.errors.map((_, i) => i));
   const b = f.band || {};
+  const sel = new Set(f.errors.map((e, i) => (inErrorLog(e) ? -1 : i)).filter(i => i >= 0));
+  const pending = sel.size;
   return h('div', null,
     h('h2', null, 'Geri bildirim'),
     h('div', { class: 'card hero' },
@@ -117,24 +143,26 @@ function feedbackView(root, d) {
       h('ul', { style: { paddingLeft: '18px', marginBottom: 0 } }, f.words.map(w => h('li', null, h('b', null, w.term), ' ', w.used ? (w.correct ? '✓' : '⚠︎') : '—', ' ', h('span', { class: 'muted' }, w.comment || ''))))) : null,
     f.errors.length ? h('div', { class: 'card' },
       h('b', null, `Hatalar (${f.errors.length})`),
-      ...f.errors.map((e, i) => h('label', { class: 'row', style: { alignItems: 'flex-start', marginTop: '10px' } },
-        h('input', { type: 'checkbox', checked: true, style: { marginTop: '4px', width: '20px', height: '20px', accentColor: 'var(--primary)' }, onchange: ev => (ev.target.checked ? sel.add(i) : sel.delete(i)) }),
-        h('div', { class: 'grow' },
-          h('div', null, h('del', { style: { color: 'var(--again)' } }, e.wrong), ' → ', h('b', { style: { color: 'var(--good)' } }, e.correct)),
-          h('div', { class: 'small muted' }, `${ERROR_CATS[e.category] || ''}${e.explanation ? ' · ' + e.explanation : ''}`)))),
-      d.errorsAdded ? h('div', { class: 'verdict ok' }, 'Hata defterine eklendi ✓')
+      ...f.errors.map((e, i) => {
+        const added = !sel.has(i);
+        return h('label', { class: 'row', style: { alignItems: 'flex-start', marginTop: '10px' } },
+          h('input', { type: 'checkbox', checked: !added, disabled: added, style: { marginTop: '4px', width: '20px', height: '20px', accentColor: 'var(--primary)' }, onchange: ev => (ev.target.checked ? sel.add(i) : sel.delete(i)) }),
+          h('div', { class: 'grow' },
+            h('div', null, h('del', { style: { color: 'var(--again)' } }, e.wrong), ' → ', h('b', { style: { color: 'var(--good)' } }, e.correct)),
+            h('div', { class: 'small muted' }, `${added ? '✓ defterde · ' : ''}${ERROR_CATS[e.category] || ''}${e.explanation ? ' · ' + e.explanation : ''}`)));
+      }),
+      !pending ? h('div', { class: 'verdict ok' }, 'Hepsi hata defterinde ✓')
         : h('button', { class: 'btn primary block', style: { marginTop: '12px' }, onclick: async () => {
           let n = 0;
           for (const i of sel) {
             const e = f.errors[i];
-            await addNote({ type: 'error', term: e.correct, wrong: e.wrong, correct: e.correct, explanation: e.explanation || '', category: ERROR_CATS[e.category] ? e.category : 'other', enriched: true, dictFetched: true, source: 'Yazma görevi' }, 'writing');
+            if (inErrorLog(e)) continue;
+            await addNote({ type: 'error', term: e.correct, wrong: e.wrong, correct: e.correct, explanation: e.explanation || '', category: ERROR_CATS[e.category] ? e.category : 'other', enriched: true, dictFetched: true, userCorrect: true, source: 'Yazma görevi' }, 'writing');
             n++;
           }
-          d.errorsAdded = true;
           toast(`${n} hata kartı eklendi`);
           render(root);
-        } }, 'Seçilenleri hata defterine ekle')) : null,
+        } }, `Seçilenleri hata defterine ekle (${pending})`)) : null,
     f.improved ? h('div', { class: 'card soft' }, h('b', null, 'Band 7.5 versiyonu'), h('p', { class: 'serif', style: { marginBottom: 0 } }, f.improved)) : null,
-    h('button', { class: 'btn block', style: { marginTop: '10px' }, onclick: () => { draft = null; render(root); } }, 'Yeni görev'),
   );
 }

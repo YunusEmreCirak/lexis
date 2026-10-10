@@ -1,4 +1,4 @@
-import { loadAll, S, saveMeta, saveSettings, requestPersistence } from './store.js';
+import { loadAll, S, saveMeta, saveSettings, deleteNote, requestPersistence } from './store.js';
 import { initScheduler, importPoolEntries } from './srs.js';
 import { backfillDictionary } from './dict.js';
 import { unlockAudio } from './tts.js';
@@ -62,6 +62,13 @@ async function seedPools() {
   if (changed) await saveMeta();
 }
 
+// v1.1.1: v1.1.0 could accept the writing prompt's own JSON template as feedback, which created an
+// error card with placeholder text. Remove any such card.
+async function cleanUpTemplateCards() {
+  const junk = [...S.notes.values()].filter(n => n.type === 'error' && n.wrong === 'exact erroneous fragment copied from the text');
+  for (const n of junk) await deleteNote(n.id);
+}
+
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.register('sw.js').then(reg => {
@@ -88,6 +95,7 @@ function registerSW() {
   await loadAll();
   initScheduler();
   await seedPools();
+  await cleanUpTemplateCards();
   if (!S.meta.installedAt) { S.meta.installedAt = Date.now(); await saveMeta(); }
   document.addEventListener('pointerdown', unlockAudio, { once: true });
   window.addEventListener('hashchange', route);

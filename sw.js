@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Bump CACHE (and js/version.js) on every release.
-const CACHE = 'lexis-v1.1.0';
+const CACHE = 'lexis-v1.1.1';
 const ASSETS = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
